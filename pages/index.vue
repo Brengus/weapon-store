@@ -1,0 +1,9 @@
+<template>
+    <div>
+        <slider/>
+        <scroll/>
+        <white/>
+        <forecasts/>
+        <cases/>
+    </div>
+</template>
