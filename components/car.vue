@@ -24,8 +24,8 @@ onMounted(() => {
         rotate: new THREE.Quaternion(),
         current: 'Idle',
         fadeDuration: 0.5,
-        walkVelocity: 20,
-        rotateSpeed: 0.1,
+        walkVelocity: 40,
+        rotateSpeed: 0.3,
         floorDecale: 0,
     };
     const sceneryData = pos;
@@ -115,7 +115,7 @@ onMounted(() => {
     }
 
     function createSnowyGround() {
-        const groundGeometry = new THREE.PlaneGeometry(1000, 1000, 256, 256); // More segments for displacement
+        const groundGeometry = new THREE.PlaneGeometry(2000, 2000, 256, 256); // More segments for displacement
         const textureLoader = new THREE.TextureLoader();
 
         const snowColor = textureLoader.load('/textures/snow/snow_albedo.jpg');
@@ -313,7 +313,7 @@ onMounted(() => {
     scene.add(group);
     followGroup = new THREE.Group();
     scene.add(followGroup);
-    scene.fog = new THREE.Fog(0x87CEEB,30,1000);
+    scene.fog = new THREE.Fog(0x87CEEB,30,800);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 5);
     dirLight.position.set(-50, 50, 50);
