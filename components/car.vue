@@ -5,17 +5,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import pos from 'public/locations/positions.json';
-import { loadScenery } from 'public/three/loadScenery';
-import { createSnowyGround } from 'public/three/createSnowyGround';
 
 const sceneContainer = ref(null);
 
 onMounted(() => {
-    let scene, renderer, camera, orbitControls;
-    let floor;
+    let scene, renderer, camera, floor, orbitControls;
     let group, followGroup, model, skeleton, mixer, clock;
     let actions = {};
-    const PI90 = Math.PI / 2;
     let isFalling = false;
     let fallTimer = 0;
     let collisionSoundBuffer;
@@ -40,6 +36,62 @@ onMounted(() => {
     const obstacles = [];
     const snowBoarderBB = new THREE.Box3();
 
+    function loadScenery() {
+        const loader = new GLTFLoader();
+        const textureLoader = new THREE.TextureLoader();
+        sceneryData.forEach(item => {
+            if (item.type === 'image'){
+                textureLoader.load(item.path,(texture)=>{
+                    const imageGeometry = new THREE.PlaneGeometry(1,1);
+                    const imageMaterial = new THREE.MeshStandardMaterial({
+                        map: texture,
+                        transparent: true,
+                        side: THREE.DoubleSide // Render both sides of the plane
+                    });
+                    item.positions.forEach(pos => {
+                        const imagePlane = new THREE.Mesh(imageGeometry, imageMaterial);
+
+                        imagePlane.scale.set(item.scale, item.scale, 1);
+                        imagePlane.position.set(pos.x, pos.y, pos.z);
+                        if(item.ground){
+                            imagePlane.rotation.x = -Math.PI/2;
+                        }
+                        if (item.link) {
+                            imagePlane.userData.link = item.link; // Store the link on the object
+                            clickableObjects.push(imagePlane);
+                        }
+                        
+                        scene.add(imagePlane);
+                })
+                });
+        
+            }else{
+                loader.load(item.path, (gltf) => {
+                    const baseModel = gltf.scene;
+                    item.positions.forEach(pos => {
+                        const clone = baseModel.clone();
+
+                        clone.position.set(pos.x, pos.y, pos.z);
+                        clone.scale.set(item.scale, item.scale, item.scale);
+                        if (item.link) {
+                                clone.userData.link = item.link; // Store the link on the object
+                                clickableObjects.push(clone);
+                            }
+                        clone.traverse(child => {
+                            if (child.isMesh) {
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                            }
+                        });
+                        const obstacleBB = new THREE.Box3().setFromObject(clone);
+                        obstacles.push(obstacleBB);
+                        scene.add(clone);
+                    });
+                });
+            }    
+        });
+    }
+
     function onPointerDown(event) {
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
@@ -51,11 +103,45 @@ onMounted(() => {
                 clickedObject = clickedObject.parent;
             }
             if (clickedObject?.userData.link) {
-                window.location.href = clickedObject.userData.link;
+                const link = clickedObject.userData.link;
+                const isExternal = link.startsWith('http://') || link.startsWith('https://');
+                if(isExternal){
+                    window.open(link,'_blank')
+                }else{
+                    window.location.href = link;
+                }
             }
         }
     }
 
+    function createSnowyGround() {
+        const groundGeometry = new THREE.PlaneGeometry(1000, 1000, 256, 256); // More segments for displacement
+        const textureLoader = new THREE.TextureLoader();
+
+        const snowColor = textureLoader.load('/textures/snow/snow_albedo.jpg');
+        const snowNormal = textureLoader.load('/textures/snow/snow_normal.jpg');
+        const snowRoughness = textureLoader.load('/textures/snow/snow_roughness.jpg');
+        const snowHeight = textureLoader.load('/textures/snow/snow_height.jpg');
+        [snowColor, snowNormal, snowRoughness, snowHeight].forEach(tex => {
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(20, 20); // scale the tiling
+        });
+        const groundMaterial = new THREE.MeshStandardMaterial({
+            map: snowColor,
+            normalMap: snowNormal,
+            roughnessMap: snowRoughness,
+            displacementMap: snowHeight,
+            displacementScale: 0.2,
+            roughness: 1,
+            metalness: 0
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+
+        floor = ground;
+        scene.add(ground);
+    }
     function loadModel() {
         const loader = new GLTFLoader();
         loader.load('/models/gltf/snowboarder.glb', gltf => {
@@ -90,9 +176,7 @@ onMounted(() => {
             controls.current = 'Idle';
         });
     }
-
     function unwrapRad(r) { return Math.atan2(Math.sin(r), Math.cos(r)); }
-
     function updateCharacter(delta) {
         if (!orbitControls || !actions.Idle || !floor) return;
 
@@ -125,7 +209,6 @@ onMounted(() => {
         const position = controls.position;
         const azimuth = orbitControls.getAzimuthalAngle();
         const play = key[0] || key[1] ? (key[1] === -1 ? 'Left' : key[1] === 1 ? 'Right' : 'Slide') : 'Idle';
-
         if (play !== 'Idle') {
             if (!snowSound.isPlaying) snowSound.play();
         } else {
@@ -155,9 +238,10 @@ onMounted(() => {
 
             if (!hasCollision) {
                 position.copy(newPosition);
-                const offset = new THREE.Vector3(0, 20, 45).applyAxisAngle(controls.up, azimuth);
-                camera.position.copy(position.clone().add(offset));
-                camera.position.lerp(position.clone().add(offset), 0.1);
+                const offset = new THREE.Vector3(0, 15, 55).applyAxisAngle(controls.up, azimuth);
+                const targetCamPos = position.clone().add(offset);
+                targetCamPos.y = Math.max(targetCamPos.y, 15); // Enforce min Y here
+                camera.position.lerp(targetCamPos, 0.1);
                 orbitControls.target.copy(position).add(new THREE.Vector3(0, 1, 0));
                 followGroup.position.copy(position);
             } else {
@@ -175,6 +259,7 @@ onMounted(() => {
                     group.position.y -= 1;
                 }
             }
+        
         }
         mixer?.update(delta);
         orbitControls.update();
@@ -204,14 +289,13 @@ onMounted(() => {
 
     function animate() {
         const delta = clock.getDelta();
-        requestAnimationFrame(animate);
         updateCharacter(delta);
         renderer.render(scene, camera);
     }
 
     const container = sceneContainer.value;
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 50, 35);
+    camera.position.set(0, 15, 35);
     const listener = new THREE.AudioListener();
     camera.add(listener);
     const snowSound = new THREE.Audio(listener);
@@ -223,12 +307,12 @@ onMounted(() => {
     })
     clock = new THREE.Clock();
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xeef2f3);
+    scene.background = new THREE.Color(0x87CEEB);
     group = new THREE.Group();
     scene.add(group);
     followGroup = new THREE.Group();
     scene.add(followGroup);
-    scene.fog = new THREE.Fog(0xa0c0d0,30,200);
+    scene.fog = new THREE.Fog(0x87CEEB,30,1000);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 5);
     dirLight.position.set(-50, 50, 50);
@@ -236,11 +320,7 @@ onMounted(() => {
     scene.add(dirLight);
     scene.add(new THREE.AmbientLight(0xffffff, 0.5));
     const audioListener = new THREE.AudioListener();
-    try{
-        floor = createSnowyGround(scene);
-    }catch (e){
-        console.log('errpr');
-    }
+
     audioLoader.load('/sounds/fall.mp3', buffer => {
     collisionSoundBuffer = buffer;
     });
@@ -249,7 +329,7 @@ onMounted(() => {
     const sunGeometry = new THREE.SphereGeometry(20, 32, 32);
     const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffdd99 });
     const sun = new THREE.Mesh(sunGeometry, sunMaterial);
-    sun.position.set(200, 50, -300); // Position it in the sky, far away
+    sun.position.set(200, 50, -500); // Position it in the sky, far away
     scene.add(sun);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -264,6 +344,7 @@ onMounted(() => {
     orbitControls.target.set(0, 1, 0);
     orbitControls.enableDamping = true;
     orbitControls.enablePan = false;
+    orbitControls.maxPolarAngle = Math.PI / 2.2
 
     window.addEventListener('resize', onWindowResize);
     document.addEventListener('keydown', onKeyDown);
@@ -276,8 +357,8 @@ onMounted(() => {
         scene.environment = texture;
         scene.environmentIntensity = 0.8;
         loadModel();
-        loadScenery(scene,clickableObjects, obstacles, sceneryData);
-        // createSnowyGround();
+        loadScenery();
+        createSnowyGround();
         });
 
     onUnmounted(() => {
