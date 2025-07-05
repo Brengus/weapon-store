@@ -148,6 +148,7 @@ onMounted(() => {
             model = gltf.scene;
             model.scale.set(100, 100, 100);
             group.add(model);
+            group.rotation.y = -Math.PI/2;
             model.traverse(obj => {
                 if (obj.isMesh) {
                     obj.castShadow = true;
