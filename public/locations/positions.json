@@ -96,7 +96,7 @@
         {
             "path": "/models/gltf/faq.glb",
             "scale": 4,
-            "link": "/faq",
+            "link": "faq",
             "positions": [
                 { "x": 160, "y": 11, "z": -140 }
             ]
@@ -158,10 +158,11 @@
             "type":"image",
             "path":"projects.png",
             "link":"/projects",
+            "ground": true,
             "scale":30,
             "color": "#FFD700",
             "positions": [
-                { "x": 5, "y": 15, "z": -250 }
+                { "x": 5, "y": 0.2, "z": -250 }
             ]
         }
     ]
