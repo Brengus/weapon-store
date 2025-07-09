@@ -4,9 +4,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import {createGroundTextLabel} from 'public/three/textLabel.js';
 import pos from 'public/locations/positions.json';
 
 const sceneContainer = ref(null);
+const fallingCubes = [];
+const pyramidCubes = [];
+const initialCubeStates = [];
 
 onMounted(() => {
     let scene, renderer, camera, floor, orbitControls;
@@ -35,6 +39,8 @@ onMounted(() => {
     const clickableObjects = [];
     const obstacles = [];
     const snowBoarderBB = new THREE.Box3();
+
+    
 
     function loadScenery() {
         const loader = new GLTFLoader();
@@ -90,8 +96,53 @@ onMounted(() => {
                 });
             }    
         });
-    }
+}
 
+function createPyramidOfCubes() {
+  const geometry = new THREE.BoxGeometry(2, 2, 2);
+  const material = new THREE.MeshStandardMaterial({ color: 0x000000 });
+  let totalLayers = 5;
+  let baseX = -50;
+  let baseZ = -100;
+  for (let layer = 0; layer < totalLayers; layer++) {
+    let numCubes = totalLayers - layer;
+    for (let i = 0; i < numCubes; i++) {
+        const cube = new THREE.Mesh(geometry, material);
+        cube.castShadow = true;
+        cube.receiveShadow = true;
+
+        const x = baseX + (i - (numCubes - 1) / 2) * 2.2;
+        const y = layer * 2 + 1;
+        const z = baseZ;
+
+        cube.position.set(x, y, z);
+        scene.add(cube);
+
+      // Store reference and initial transform
+        pyramidCubes.push(cube);
+        initialCubeStates.push({
+            position: cube.position.clone(),
+            rotation: cube.rotation.clone()
+        });
+        cube.userData.velocity = new THREE.Vector3();
+        cube.userData.rotationVelocity = new THREE.Vector3();
+        cube.userData.boundingBox = new THREE.Box3().setFromObject(cube);
+        cube.userData.isFalling = false;
+        obstacles.push(cube);
+        fallingCubes.push(cube);
+    }
+  }
+}
+function resetCubePyramid() {
+  for (let i = 0; i < pyramidCubes.length; i++) {
+    const cube = pyramidCubes[i];
+    const initial = initialCubeStates[i];
+    cube.userData.boundingBox.setFromObject(cube);
+    cube.position.copy(initial.position);
+    cube.rotation.copy(initial.rotation);
+    cube.velocity?.set(0, 0, 0); // If using physics
+  }
+}
     function onPointerDown(event) {
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
@@ -113,11 +164,9 @@ onMounted(() => {
             }
         }
     }
-
     function createSnowyGround() {
-        const groundGeometry = new THREE.PlaneGeometry(2000, 2000, 256, 256); // More segments for displacement
+        const groundGeometry = new THREE.PlaneGeometry(800, 800, 256, 256); // More segments for displacement
         const textureLoader = new THREE.TextureLoader();
-
         const snowColor = textureLoader.load('/textures/snow/snow_albedo.jpg');
         const snowNormal = textureLoader.load('/textures/snow/snow_normal.jpg');
         const snowRoughness = textureLoader.load('/textures/snow/snow_roughness.jpg');
@@ -235,7 +284,15 @@ onMounted(() => {
             group.quaternion.rotateTowards(rotate, controls.rotateSpeed);
             snowBoarderBB.setFromObject(group);
 
-            let hasCollision = obstacles.some(ob => snowBoarderBB.intersectsBox(ob));
+            let hasCollision = obstacles.some(ob => {
+                if (ob instanceof THREE.Box3) {
+                    return snowBoarderBB.intersectsBox(ob);
+                } else if (ob.userData?.boundingBox instanceof THREE.Box3) {
+                    ob.userData.boundingBox.setFromObject(ob);
+                    return snowBoarderBB.intersectsBox(ob.userData.boundingBox);
+                }
+                return false;
+            });
 
             if (!hasCollision) {
                 position.copy(newPosition);
@@ -258,6 +315,20 @@ onMounted(() => {
                         fall.reset().setEffectiveWeight(1).fadeIn(0.3).play();
                     }
                     group.position.y -= 1;
+                    fallingCubes.forEach(cube =>{
+                        cube.userData.isFalling = true;
+                        cube.userData.velocity.set(
+                            (Math.random()-0.5) * 10,
+                            Math.random() * 5 + 5,
+                            (Math.random()) * -20
+                        );
+                        cube.userData.rotationVelocity.set(
+                            Math.random() *0.1,
+                            Math.random() *0.1,
+                            Math.random() *0.1
+                        )
+                        
+                    })
                 }
             }
         
@@ -268,6 +339,7 @@ onMounted(() => {
 
     function onKeyDown(e) {
         const k = controls.key;
+        if(e.code === 'KeyR') resetCubePyramid();
         if (e.code === 'ArrowUp' || e.code === 'KeyW') k[0] = -1;
         if (e.code === 'ArrowDown' || e.code === 'KeyS') k[0] = 1;
         if (e.code === 'ArrowLeft' || e.code === 'KeyA') k[1] = -1;
@@ -291,6 +363,26 @@ onMounted(() => {
     function animate() {
         const delta = clock.getDelta();
         updateCharacter(delta);
+        fallingCubes.forEach(cube => {
+            if (cube.userData.isFalling) {
+                cube.userData.velocity.y -= 9.8 * delta;
+                cube.position.add(cube.userData.velocity.clone().multiplyScalar(delta));
+                cube.rotation.x += cube.userData.rotationVelocity.x;
+                cube.rotation.y += cube.userData.rotationVelocity.y;
+                cube.rotation.z += cube.userData.rotationVelocity.z;
+                const minY = 1;
+                if (cube.position.y <= minY) {
+                    cube.position.y = minY;
+                    cube.userData.velocity.y *= -0.4; // small bounce
+                    if (Math.abs(cube.userData.velocity.y) < 1) {
+                        cube.userData.velocity.set(0, 0, 0);
+                        cube.userData.rotationVelocity.set(0, 0, 0);
+                        cube.userData.isFalling = false;
+                    }
+                }
+            }
+        });
+
         renderer.render(scene, camera);
     }
 
@@ -318,6 +410,38 @@ onMounted(() => {
     const dirLight = new THREE.DirectionalLight(0xffffff, 5);
     dirLight.position.set(-50, 50, 50);
     dirLight.castShadow = true;
+    createGroundTextLabel(
+        'USE YOUR KEYS TO MOVE AROUND',
+        new THREE.Vector3(0, 1, -10), // slightly above the ground to avoid z-fighting
+        scene,
+        {
+            font: '108px Arial', color: 'black', skewX: 0, skewY: 0, skewZ: 45, scale: 4, rotation: { x: -Math.PI / 2, y: 0, z: 0}
+        }
+    );
+    createGroundTextLabel(
+        'PROJECTS',
+        new THREE.Vector3(5, 0.2, -250), // slightly above the ground to avoid z-fighting
+        scene,
+        {
+            font: '108px Arial', color: 'black', skewX: 0, skewY: 0, skewZ: 45, scale: 4, rotation: { x: -Math.PI / 2, y: 0, z: 0}
+        }
+    );
+    createGroundTextLabel(
+        'HOME',
+        new THREE.Vector3(105, 0.2, -120), // slightly above the ground to avoid z-fighting
+        scene,
+        {
+            font: '108px Arial', color: 'black', skewX: 0, skewY: 0, skewZ: 45, scale: 4, rotation: { x: -Math.PI / 2, y: 0, z: 0}
+        }
+    );
+    createGroundTextLabel(
+        'FAQ',
+        new THREE.Vector3(165, 0.2, -120), // slightly above the ground to avoid z-fighting
+        scene,
+        {
+            font: '108px Arial', color: 'black', skewX: 0, skewY: 0, skewZ: 45, scale: 4, rotation: { x: -Math.PI / 2, y: 0, z: 0}
+        }
+    );
     scene.add(dirLight);
     scene.add(new THREE.AmbientLight(0xffffff, 0.5));
     const audioListener = new THREE.AudioListener();
@@ -359,6 +483,7 @@ onMounted(() => {
         scene.environmentIntensity = 0.8;
         loadModel();
         loadScenery();
+        createPyramidOfCubes();
         createSnowyGround();
         });
 
